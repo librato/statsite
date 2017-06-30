@@ -153,6 +153,41 @@ class TestLibratoLegacy(object):
 
         assert expected_output == self.librato.gauges["baby-animals.active_sessions\tproduction.puppy-cam-1"]
 
+    def test_truncate_metric_name_for_legacy(self):
+        # 255 character limit
+        long_metric_name = 'a' * 300
+        truncated_metric_name = 'a' * 255
+        self.librato = build_librato({
+            "statsite_output": "gauges.%s|42.000000|1401577507" % long_metric_name,
+            "source": "myhost",
+            "write_to_legacy": True
+        })
+        expected_output = {
+            "name": truncated_metric_name,
+            "source": "myhost",
+            "measure_time": 1401577507,
+            "value": 42.0,
+        }
+        assert expected_output == self.librato.gauges[long_metric_name + "\tmyhost"]
+
+    def test_truncate_source_name_for_legacy(self):
+        # 255 character limit
+        long_source_name = 'a' * 300
+        truncated_source_name = 'a' * 255
+        self.librato = build_librato({
+            "statsite_output": "gauges.foo|42.000000|1401577507",
+            "source": long_source_name,
+            "write_to_legacy": True
+        })
+        expected_output = {
+            "name": "foo",
+            "source": truncated_source_name,
+            "measure_time": 1401577507,
+            "value": 42.0,
+        }
+        assert expected_output == self.librato.gauges["foo\t" + long_source_name]
+
+
 
 class TestLibrato(object):
     def setup_method(self, method):

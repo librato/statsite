@@ -293,8 +293,19 @@ class LibratoStore(object):
         # Build out the legacy gauges
         if self.write_to_legacy:
             if k not in self.gauges:
+                # Truncate metric/source names to 255 for legacy
+                if len(name) > 255:
+                    name = name[:255]
+                    self.logger.warning(
+                        "Truncating metric %s to 255 characters to avoid failing entire payload" % name
+                    )
+                if source and len(source) > 255:
+                    source = source[:255]
+                    self.logger.warning(
+                        "Truncating source %s to 255 characters to avoid failing entire payload" % source
+                    )
                 self.gauges[k] = {
-                    'name': name[:255],
+                    'name': name,
                     'source': source,
                     'measure_time': ts
                 }
