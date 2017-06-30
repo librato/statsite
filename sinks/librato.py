@@ -245,7 +245,6 @@ class LibratoStore(object):
         if self.source_prefix:
             source = "%s.%s" % (self.source_prefix, source)
 
-
         # Parse the tags out
         name, tags = self.parse_tags(name, ismultipart)
         subf = None
@@ -282,6 +281,7 @@ class LibratoStore(object):
 
         if k not in self.measurements:
             self.measurements[k] = []
+
         meas = {
             'name': name,
             'tags' : tags,
@@ -290,18 +290,17 @@ class LibratoStore(object):
         }
         self.measurements[k].append(meas)
             
-        # self.measurements[k][subf] = value
-        
         # Build out the legacy gauges
-        if k not in self.gauges:
-            self.gauges[k] = {
-                'name': name,
-                'source': source,
-                'measure_time': ts
-            }
-            
-        self.gauges[k][subf] = value
-            
+        if self.write_to_legacy:
+            if k not in self.gauges:
+                self.gauges[k] = {
+                    'name': name[:255],
+                    'source': source,
+                    'measure_time': ts
+                }
+
+            self.gauges[k][subf] = value
+
     def build(self, metrics):
         """
         Build metric data to send to Librato
@@ -337,6 +336,11 @@ class LibratoStore(object):
             f = urllib2.urlopen(req, timeout = self.flush_timeout_secs)
             response = f.read()
             f.close()
+            # The new tags API supports partial payload accept/reject
+            # So let's show a message if any part fails
+            if 'errors' in response:
+                parsed_response = json.loads(response)
+                self.logger.error(parsed_response)
         except urllib2.HTTPError as error:
             body = error.read()
             self.logger.warning('Failed to send metrics to Librato: Code: %d. Response: %s' % \
