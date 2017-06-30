@@ -203,9 +203,13 @@ class TestLibrato(object):
         assert metric == 'foo'
         assert tags == {"role": "db", "env": "prod", "one": "two"}
 
-    # It seems bad to lop off an abitrary tag and append to metric name?
     def test_parse_tags_multipart(self):
-        metric, tags = self.librato.parse_tags("foo#role=db,env=prod.tester", True)
+        # For timers, statsite will append the .p99 etc to the end of the
+        # metric name (which includes our tag formatted stuff).
+        # This is just testing the generic behavior of popping the suffix
+        # and appending to metric name
+        multipart = True
+        metric, tags = self.librato.parse_tags("foo#role=db,env=prod.tester", multipart)
         assert metric == 'foo.tester'
         assert tags == {"role": "db", "env": "prod"}
 
@@ -235,6 +239,45 @@ class TestLibrato(object):
         # 'host' is automatically defaulted to `hostname` unless specified in the config
         self.librato = build_librato()
         assert self.librato.tags.has_key("host")
+
+    def test_source_from_config(self):
+        # 'source' is defaulted to the config value
+        self.librato = build_librato({
+            "statsite_output": "counts.requests.2xx#environment=stg|42|1401577507",
+            "source": "myhost"
+        })
+        assert self.librato.source == "myhost"
+        # Source is not set in the top-level tags
+        assert "source" not in self.librato.tags
+        m = self.librato.measurements["requests.2xx\tmyhost"][0]
+        assert m
+        assert m['tags']['source'] == 'myhost'
+
+    def test_source_not_in_top_level_tags(self):
+        # 'source' is defaulted to the config value
+        self.librato = build_librato({
+            "statsite_output": "counts.requests.2xx#environment=stg|42|1401577507",
+            "source": "myhost"
+        })
+        assert "source" not in self.librato.tags
+
+    def test_source_in_measurement_tags(self):
+        self.librato = build_librato({
+            "statsite_output": "counts.requests.2xx#environment=stg|42|1401577507",
+            "source": "myhost"
+        })
+        assert self.librato.source == "myhost"
+        m = self.librato.measurements["requests.2xx\tmyhost"][0]
+        assert m
+        assert m['tags']['source'] == 'myhost'
+
+    def test_source_in_measurement_tags_override(self):
+        self.librato = build_librato({
+            "statsite_output": "counts.requests.2xx#environment=stg,source=uid_123|42|1401577507",
+            "source": "myhost"
+        })
+        m = self.librato.measurements["requests.2xx\tmyhost"][0]
+        assert m['tags']['source'] == 'uid_123'
     
     def test_measurements_with_tags_and_source(self):
         self.librato = build_librato({

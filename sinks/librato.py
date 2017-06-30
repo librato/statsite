@@ -270,8 +270,9 @@ class LibratoStore(object):
             # Sanitize
             source = self.sanitize(source)
 
-            # Add a tag of source
-            tags['source'] = source
+            # Add a tag of source if not specified by the client
+            if 'source' not in tags:
+                tags['source'] = source
 
             # Build a key for the dict that will hold all the measurements to
             # submit
