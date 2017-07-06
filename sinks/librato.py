@@ -81,7 +81,7 @@ class LibratoStore(object):
             'sum': 'sum',
             'sum_sq': None,
             'count' : 'count',
-            'stdev' : None,
+            'stdev' : 'stddev_m2',
             'lower' : 'min',
             'upper' : 'max',
             'mean' : None
@@ -281,16 +281,23 @@ class LibratoStore(object):
             k = name
 
         if k not in self.measurements:
-            self.measurements[k] = []
+            m = [{'name': name, 'tags' : tags, 'time' : ts, subf: value}]
+            self.measurements[k] = m
+        else:
+            # Build summary statistics
+            processed = False
+            # Try to find an existing measurement for this tagset
+            # so we can add the next summary statistic
+            for m in self.measurements[k]:
+                if m['tags'] == tags:
+                    m[subf] = value
+                    processed = True
+                    break
+            if not processed:
+                # New tagset
+                payload = {'name': name, 'tags' : tags, 'time' : ts, subf: value}
+                self.measurements[k].append(payload)
 
-        meas = {
-            'name': name,
-            'tags' : tags,
-            'time' : ts,
-            subf: value
-        }
-        self.measurements[k].append(meas)
-            
         # Build out the legacy gauges
         if self.write_to_legacy:
             if k not in self.gauges:
@@ -352,7 +359,9 @@ class LibratoStore(object):
             # So let's show a message if any part fails
             if 'errors' in response:
                 parsed_response = json.loads(response)
-                self.logger.error(parsed_response)
+                # errors could be [], so check that prior to logging anything
+                if parsed_response['errors']:
+                    self.logger.error(parsed_response)
         except urllib2.HTTPError as error:
             body = error.read()
             self.logger.warning('Failed to send metrics to Librato: Code: %d. Response: %s' % \

@@ -82,21 +82,22 @@ class TestLibratoLegacy(object):
             "count":        1.0,
             "sum":          1017.0,
             "max":          1017.0,
-            "min":          1017.0
+            "min":          1017.0,
+            "stddev_m2":     0.0
         }
         
         assert expected_output == self.librato.gauges["query\tlocalhost"]
 
     def test_counts_send_as_gauges(self):
         self.librato = build_librato({
-            "statsite_output": "counts.active_sessions|1.000000|1401577507",
+            "statsite_output": "counts.active_sessions|9.000000|1401577507",
             "write_to_legacy": True
         })
         expected_output = {
             "name":         "active_sessions",
             "source":       None,
             "measure_time": 1401577507,
-            "value":        1.0,
+            "value":        9.0,
         }
         assert expected_output == self.librato.gauges["active_sessions"]
 
@@ -328,6 +329,60 @@ counts.requests.2xx#environment=stg|85|1401577507
 
         result = self.librato.measurements["requests.2xx"]
         assert expected_output == result
+
+    def test_timer_simple(self):
+        data = """\
+timers.foo.sum|1017.000000|1401577507
+timers.foo.mean|1017.000000|1401577507
+timers.foo.lower|1017.000000|1401577507
+timers.foo.upper|1017.000000|1401577507
+timers.foo.count|1|1401577507
+"""
+        self.librato = build_librato({"statsite_output": data})
+        expected_output = [
+            {
+                "name": "foo",
+                "time": 1401577507,
+                "min": 1017.0,
+                "max": 1017.0,
+                "sum": 1017.0,
+                "count": 1.0,
+                "tags": {}
+            }
+        ]
+        result = self.librato.measurements["foo"]
+        assert expected_output == result
+
+    def test_timer_complex(self):
+        data = """\
+timers.foo.sum|2036.000000|1401577507
+timers.foo.mean|1018.000000|1401577507
+timers.foo.lower|1017.000000|1401577507
+timers.foo.upper|1019.000000|1401577507
+timers.foo.count|2|1401577507
+"""
+        self.librato = build_librato({"statsite_output": data})
+        expected_output = [
+            {
+                "name": "foo",
+                "time": 1401577507,
+                "min": 1017.0,
+                "max": 1019.0,
+                "sum": 2036.0,
+                "count": 2.0,
+                "tags": {}
+            }
+        ]
+        result = self.librato.measurements["foo"]
+        assert expected_output == result
+
+    def test_timers_stddev(self):
+        self.librato = build_librato(
+            {"statsite_output": "timers.foo.stdev|42.123456|1401577507"}
+        )
+        # Store in Librato's stddev_m2 field
+        # See docs at https://www.librato.com/docs/api/#create-a-measurement
+        assert self.librato.measurements['foo'][0]['stddev_m2'] == 42.123456
 
     def test_timer_with_percentile_suffix(self):
         # Statsite will tack the p90 onto the actual metric name before we get it
