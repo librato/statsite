@@ -411,7 +411,7 @@ class LibratoStore(object):
             if len(self.gauges) == 0:
                 return
             values = self.gauges.values()
-            
+            count = 0
             for measure in values:
                 legacy_metrics.append(measure)
                 count += 1
