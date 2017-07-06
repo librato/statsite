@@ -81,7 +81,7 @@ class LibratoStore(object):
             'sum': 'sum',
             'sum_sq': None,
             'count' : 'count',
-            'stdev' : None,
+            'stdev' : 'stddev_m2',
             'lower' : 'min',
             'upper' : 'max',
             'mean' : None
@@ -182,7 +182,7 @@ class LibratoStore(object):
     def sanitize(self, name):
         return self.sanitize_re.sub("_", name)
     
-    def parse_tags(self, name, multipart):
+    def parse_tags(self, name, multipart=False):
         # Find and parse the tags from the name using the syntax name#tag1=value,tag2=value
         s = name.split("#")
         tags = {}
@@ -190,14 +190,15 @@ class LibratoStore(object):
         
         if len(s) > 1:
             name = s.pop(0)
-            # Timers will append .p90, .p99 etc to the end of the value of the last tag. Parse the suffix out if this is the last tag's value and set the name
+            raw_tags = s.pop().split(",")
             if multipart:
-                raw_tags = s.pop().split(",")
-                last_tag = raw_tags.pop(-1)
+                # Timers will append .p90, .p99 etc to the end of the "metric name"
+                # Parse the suffix out and append to the metric name
+                last_tag = raw_tags.pop()
                 last_tag_split = last_tag.split('.')
 
                 # Store the proper name. The suffix is the last element in split of the last tag.
-                name = name + "." + last_tag_split.pop(-1)
+                name = name + "." + last_tag_split.pop()
 
                 # Put the tag, without the suffix, back in the list of raw tags
                 if len(last_tag_split) > 1:
@@ -207,25 +208,17 @@ class LibratoStore(object):
                     # raw_tags.extend(last_tag_split)
                 else:
                     raw_tags.extend(last_tag_split)
-            else:         
-                raw_tags = s.pop().split(",")
 
             # Parse the tags out
             for raw_tag in raw_tags:
                 # Get the key and value from tag=value
-                tag_pair = raw_tag.split("=")
-                tag_key = tag_pair[0]
-                tag_value = tag_pair[1]
+                tag_key, tag_value = raw_tag.split("=")
                 tags[tag_key] = tag_value
         return name, tags
                 
         
 
     def add_measure(self, key, value, time):
-        # metric and source names must be 255 or fewer characters
-        if len(key) > 255:
-            key = key[:255]
-
         ts = int(time)
         if self.floor_time_secs != None:
             ts = (ts / self.floor_time_secs) * self.floor_time_secs
@@ -252,7 +245,6 @@ class LibratoStore(object):
         if self.source_prefix:
             source = "%s.%s" % (self.source_prefix, source)
 
-
         # Parse the tags out
         name, tags = self.parse_tags(name, ismultipart)
         subf = None
@@ -278,8 +270,9 @@ class LibratoStore(object):
             # Sanitize
             source = self.sanitize(source)
 
-            # Add a tag of source
-            tags['source'] = source
+            # Add a tag of source if not specified by the client
+            if 'source' not in tags:
+                tags['source'] = source
 
             # Build a key for the dict that will hold all the measurements to
             # submit
@@ -288,24 +281,45 @@ class LibratoStore(object):
             k = name
 
         if k not in self.measurements:
-            self.measurements[k] = {
-                'name': name,
-                'tags' : tags,
-                'time' : ts
-            }
-            
-        self.measurements[k][subf] = value
-        
+            m = [{'name': name, 'tags' : tags, 'time' : ts, subf: value}]
+            self.measurements[k] = m
+        else:
+            # Build summary statistics
+            processed = False
+            # Try to find an existing measurement for this tagset
+            # so we can add the next summary statistic
+            for m in self.measurements[k]:
+                if m['tags'] == tags:
+                    m[subf] = value
+                    processed = True
+                    break
+            if not processed:
+                # New tagset
+                payload = {'name': name, 'tags' : tags, 'time' : ts, subf: value}
+                self.measurements[k].append(payload)
+
         # Build out the legacy gauges
-        if k not in self.gauges:
-            self.gauges[k] = {
-                'name': name,
-                'source': source,
-                'measure_time': ts
-            }
-            
-        self.gauges[k][subf] = value
-            
+        if self.write_to_legacy:
+            if k not in self.gauges:
+                # Truncate metric/source names to 255 for legacy
+                if len(name) > 255:
+                    name = name[:255]
+                    self.logger.warning(
+                        "Truncating metric %s to 255 characters to avoid failing entire payload" % name
+                    )
+                if source and len(source) > 255:
+                    source = source[:255]
+                    self.logger.warning(
+                        "Truncating source %s to 255 characters to avoid failing entire payload" % source
+                    )
+                self.gauges[k] = {
+                    'name': name,
+                    'source': source,
+                    'measure_time': ts
+                }
+
+            self.gauges[k][subf] = value
+
     def build(self, metrics):
         """
         Build metric data to send to Librato
@@ -341,6 +355,13 @@ class LibratoStore(object):
             f = urllib2.urlopen(req, timeout = self.flush_timeout_secs)
             response = f.read()
             f.close()
+            # The new tags API supports partial payload accept/reject
+            # So let's show a message if any part fails
+            if 'errors' in response:
+                parsed_response = json.loads(response)
+                # errors could be [], so check that prior to logging anything
+                if parsed_response['errors']:
+                    self.logger.error(parsed_response)
         except urllib2.HTTPError as error:
             body = error.read()
             self.logger.warning('Failed to send metrics to Librato: Code: %d. Response: %s' % \
@@ -372,26 +393,25 @@ class LibratoStore(object):
         legacy_metrics = []
         count = 0
         
-        values = self.measurements.values()
-        
-        for measure in values:
-            tagged_metrics.append(measure)
-            count += 1
+        for v in self.measurements.values():
+            for metric in v:
+                tagged_metrics.append(metric)
+                count += 1
 
-            if count >= self.max_metrics_payload:
-                self.flush_payload(headers, tagged_metrics)
-                count = 0
-                tagged_metrics = []
+                if count >= self.max_metrics_payload:
+                    self.flush_payload(headers, tagged_metrics)
+                    count = 0
+                    tagged_metrics = []
 
         if count > 0:
-            self.flush_payload(headers, metrics)
+            self.flush_payload(headers, tagged_metrics)
         
         # If enabled, submit flush metrics to Librato's legacy API
         if self.write_to_legacy:
             if len(self.gauges) == 0:
                 return
             values = self.gauges.values()
-            
+            count = 0
             for measure in values:
                 legacy_metrics.append(measure)
                 count += 1
