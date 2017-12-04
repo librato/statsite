@@ -162,6 +162,22 @@ class LibratoStore(object):
         else:
             self.write_to_legacy = False
         
+        # Also check if we want to send measurements to AppOptics
+        if config.has_option(sect, "write_to_ao"):
+            self.write_to_ao = config.getboolean(sect, "write_to_ao")
+        else:
+            self.write_to_ao = False
+
+        if config.has_option(sect, "ao_email"):
+            self.ao_email = config.get(sect, "ao_email")
+        else: 
+            self.ao_email = None
+        
+        if config.has_option(sect, "ao_token"):
+            self.ao_token = config.get(sect, "ao_token")
+        else:
+            self.ao_token = None
+        
         # Global Tags
         if config.has_option(sect, "tags"):
             self.tags = ast.literal_eval(config.get(sect, "tags"))
@@ -386,7 +402,8 @@ class LibratoStore(object):
         headers = {
             'Content-Type': 'application/json',
             'User-Agent': self.build_user_agent(),
-            'Authorization': 'Basic %s' % self.build_basic_auth()
+            'Authorization': 'Basic %s' % self.build_basic_auth(self.email,
+                self.token)
             }
 
         tagged_metrics = []
@@ -405,8 +422,13 @@ class LibratoStore(object):
 
         if count > 0:
             self.flush_payload(headers, tagged_metrics)
+
+            # If enabled, send this payload to AppOptics
+            if self.write_to_ao:
+                headers['Authorization'] = 'Basic %s' % self.build_basic_auth(self.ao_email, self.ao_token)
+                self.flush_payload(headers, tagged_metrics)
         
-        # If enabled, submit flush metrics to Librato's legacy API
+        # If enabled, submit flush metrics to Librato's legacy source-based API
         if self.write_to_legacy:
             if len(self.gauges) == 0:
                 return
@@ -425,8 +447,8 @@ class LibratoStore(object):
                 self.flush_payload(headers, legacy_metrics, True)
         
 
-    def build_basic_auth(self):
-        base64string = base64.encodestring('%s:%s' % (self.email, self.token))
+    def build_basic_auth(self, email, token):
+        base64string = base64.encodestring('%s:%s' % (email, token))
         return base64string.translate(None, '\n')
 
     def build_user_agent(self):

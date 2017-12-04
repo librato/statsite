@@ -63,6 +63,11 @@ token = 02ac4003c4fcd11bf9cee34e34263155dc7ba1906c322d167db6ab4b2cd2082b\
     else:
         config += "\nwrite_to_legacy = False"
 
+    if "write_to_ao" in options:
+        config += "\nwrite_to_ao = %s" % (options["write_to_ao"])
+    else:
+        config += "\nwrite_to_ao = False"
+
     return config
 
 
@@ -499,3 +504,20 @@ timers.foo.count|2|1401577507
         
         assert {"host": "myhost" } == self.librato.tags
         assert expected_output == self.librato.measurements["requests.2xx"]
+
+    def test_write_to_ao(self):
+        self.librato = build_librato({
+            "statsite_output": "counts.active_sessions|1.000000|1401577507",
+            "write_to_ao": True
+        })
+
+        expected_ao_output = [{
+            "name":         "active_sessions",
+            "time":         1401577507,
+            "value":        1.0,
+            "tags":         {}
+        }]
+
+        k = "active_sessions"
+        assert self.librato.write_to_ao
+        assert expected_ao_output == self.librato.measurements['active_sessions']
